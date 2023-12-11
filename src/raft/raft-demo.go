@@ -483,7 +483,7 @@ package raft
 //type AppendEntriesReply struct {
 //	Term      int
 //	Success   bool
-//	NextIndex int // lab3: optimize
+//	NextEntryIndex int // lab3: optimize
 //}
 //
 //type LogEntry struct {
@@ -520,7 +520,7 @@ package raft
 //	if args.Term < rf.currentTerm { // Reply false if term < currentTerm
 //		reply.Term = rf.currentTerm
 //		reply.Success = false
-//		reply.NextIndex = args.PrevLogIndex + 1
+//		reply.NextEntryIndex = args.PrevLogIndex + 1
 //		DPrintf("[AppendEntries] server[%d] replies fail append entries to server[%d](leader). Leader's term < currentTerm", rf.me, args.LeaderID)
 //		return
 //	}
@@ -534,14 +534,14 @@ package raft
 //		}
 //		// lab3: optimize
 //		if args.PrevLogIndex >= len(rf.logs) {
-//			reply.NextIndex = len(rf.logs)
+//			reply.NextEntryIndex = len(rf.logs)
 //		} else if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
 //			conflictTerm := rf.logs[args.PrevLogIndex].Term
 //			firstIndex := args.PrevLogIndex
 //			for firstIndex > 0 && rf.logs[firstIndex].Term == conflictTerm {
 //				firstIndex--
 //			}
-//			reply.NextIndex = firstIndex + 1
+//			reply.NextEntryIndex = firstIndex + 1
 //		}
 //		DPrintf("[AppendEntries] server[%d] replies fail append entries to server[%d](leader). Terms mismatch.", rf.me, args.LeaderID)
 //		return
@@ -568,7 +568,7 @@ package raft
 //
 //	reply.Term = rf.currentTerm
 //	reply.Success = true
-//	reply.NextIndex = len(rf.logs)
+//	reply.NextEntryIndex = len(rf.logs)
 //	if rf.state == FOLLOWER { // NOTICE: reset timer only for follower
 //		rf.resetTimerCh <- true
 //	}
@@ -582,7 +582,7 @@ package raft
 //		DPrintf("[sendAppendEntries] server[%d](leader) receives reply from server[%d]. Result is %t", rf.me, server, reply.Success)
 //		if rf.state == LEADER {
 //			if reply.Success && reply.Term == rf.currentTerm { // NOTICE: 增加了应该是当前term的判断
-//				rf.nextIndex[server] = reply.NextIndex
+//				rf.nextIndex[server] = reply.NextEntryIndex
 //				rf.matchIndex[server] = rf.nextIndex[server] - 1
 //
 //				// If there exists an N such that N > commitIndex, a majority of matchIndex[i] ≥ N, and logs[N].term == currentTerm: set commitIndex = N
@@ -611,7 +611,7 @@ package raft
 //					rf.convert2Follower()
 //				} else {
 //					// If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
-//					rf.nextIndex[server] = reply.NextIndex
+//					rf.nextIndex[server] = reply.NextEntryIndex
 //				}
 //			}
 //		}
