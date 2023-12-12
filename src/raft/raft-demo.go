@@ -388,7 +388,7 @@ package raft
 //				args.PrevLogTerm = rf.logs[args.PrevLogIndex].Term
 //				reply := &AppendEntriesReply{}
 //				DPrintf("[loopAsLeader] server[%d](leader) sends initial empty AppendEntries RPCs (heartbeat) to server[%d]. Leader term: %d. args: %v", rf.me, i, rf.currentTerm, *args)
-//				go rf.sendAppendEntries(i, args, reply)
+//				go rf.leaderSendAppendEntries(i, args, reply)
 //			}
 //		}
 //		rf.timer = time.NewTimer(time.Duration(HeartbeatTimeout) * time.Millisecond)
@@ -423,7 +423,7 @@ package raft
 //				args.PrevLogTerm = rf.logs[args.PrevLogIndex].Term
 //				reply := &AppendEntriesReply{}
 //				DPrintf("[loopAsLeader] server[%d](leader) sends append entries to server[%d]. Leader term: %d. args: %v", rf.me, i, rf.currentTerm, *args)
-//				go rf.sendAppendEntries(i, args, reply)
+//				go rf.leaderSendAppendEntries(i, args, reply)
 //			}
 //		}
 //
@@ -575,11 +575,11 @@ package raft
 //	DPrintf("[AppendEntries] server[%d] replies success append entries to server[%d](leader). logs length: %d, logs: %v", rf.me, args.LeaderID, len(rf.logs), rf.logs)
 //}
 //
-//func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+//func (rf *Raft) leaderSendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 //	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 //	if ok {
 //		rf.mu.Lock()
-//		DPrintf("[sendAppendEntries] server[%d](leader) receives reply from server[%d]. Result is %t", rf.me, server, reply.Success)
+//		DPrintf("[leaderSendAppendEntries] server[%d](leader) receives reply from server[%d]. Result is %t", rf.me, server, reply.Success)
 //		if rf.state == LEADER {
 //			if reply.Success && reply.Term == rf.currentTerm { // NOTICE: 增加了应该是当前term的判断
 //				rf.nextIndex[server] = reply.NextEntryIndex
@@ -595,7 +595,7 @@ package raft
 //							}
 //						}
 //						if count > len(rf.peers)/2 {
-//							DPrintf("[sendAppendEntries] server[%d](leader) sets commitIndex from %d to %d.", rf.me, rf.commitIndex, N)
+//							DPrintf("[leaderSendAppendEntries] server[%d](leader) sets commitIndex from %d to %d.", rf.me, rf.commitIndex, N)
 //							rf.commitIndex = N
 //							break
 //						}
@@ -604,7 +604,7 @@ package raft
 //				rf.applyMsg()
 //			} else {
 //				if rf.currentTerm < reply.Term { // If RPC request or response contains term T > currentTerm: set currentTerm = T, convert to follower
-//					DPrintf("[sendAppendEntries] server[%d](old leader) updates current term %d to reply term %d from server[%d].", rf.me, rf.currentTerm, reply.Term, server)
+//					DPrintf("[leaderSendAppendEntries] server[%d](old leader) updates current term %d to reply term %d from server[%d].", rf.me, rf.currentTerm, reply.Term, server)
 //					rf.currentTerm = reply.Term
 //					rf.votedFor = -1
 //					rf.persist()
@@ -617,7 +617,7 @@ package raft
 //		}
 //		rf.mu.Unlock()
 //	} else {
-//		DPrintf("[sendAppendEntries] server[%d](leader) cannot receive from server[%d].", rf.me, server)
+//		DPrintf("[leaderSendAppendEntries] server[%d](leader) cannot receive from server[%d].", rf.me, server)
 //	}
 //	return ok
 //}
