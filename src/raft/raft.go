@@ -241,30 +241,31 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		return
 	} else if args.Term > rf.currentTerm {
+		// If RPC request or response contains term T > currentTerm:
+		// set currentTerm = T, convert to follower (§5.1)
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.persist()
 		rf.beFollower()
 	}
 
-	if args.Term == rf.currentTerm {
-		reply.Term = rf.currentTerm
+	reply.Term = rf.currentTerm
 
-		lastLogIndex := len(rf.logs) - 1
-		lastLogTerm := rf.logs[lastLogIndex].Term
+	lastLogIndex := len(rf.logs) - 1
+	lastLogTerm := rf.logs[lastLogIndex].Term
 
-		if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && (args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm) && args.LastLogIndex >= lastLogIndex) {
-			reply.VoteGranted = true
-			rf.votedFor = args.CandidateId
-			rf.persist()
+	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && (args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex)) {
+		reply.VoteGranted = true
+		rf.votedFor = args.CandidateId
+		rf.persist()
 
-			if rf.status == FOLLOWER {
-				rf.resetTimer <- true
-			}
-		} else {
-			reply.VoteGranted = false
+		if rf.status == FOLLOWER {
+			rf.resetTimer <- true
 		}
+	} else {
+		reply.VoteGranted = false
 	}
+
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -289,6 +290,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	defer rf.mu.Unlock()
 
 	if ok && rf.status == CANDIDATE {
+		// If RPC request or response contains term T > currentTerm:
+		// set currentTerm = T, convert to follower (§5.1)
 		if rf.currentTerm < reply.Term {
 			rf.votedFor = -1
 			rf.currentTerm = reply.Term
@@ -296,6 +299,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			rf.persist()
 			rf.beFollower()
 		} else if reply.VoteGranted == true && reply.Term == rf.currentTerm {
+			// If votes received from majority of servers: become leader
 			rf.votes += 1
 
 			if rf.votes > len(rf.peers)/2 {
@@ -321,28 +325,32 @@ func (rf *Raft) AppendEntries(arguments *AppendEntriesArguments, results *Append
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	// If RPC request or response contains term T > currentTerm:
+	// set currentTerm = T, convert to follower (§5.1)
 	if rf.status == FOLLOWER {
 		if arguments.Term > rf.currentTerm {
 			rf.currentTerm = arguments.Term
-			rf.votedFor = -1
 			rf.persist()
 		}
 	} else if rf.status == CANDIDATE {
+		// If AppendEntries RPC received from new leader: convert to
+		// follower
 		if arguments.Term >= rf.currentTerm {
 			rf.currentTerm = arguments.Term
+			rf.votedFor = -1
 			rf.beFollower()
 		}
-	} else if arguments.Term > rf.currentTerm {
-		rf.currentTerm = arguments.Term
-		rf.beFollower()
 	}
 
+	// Reply false if term < currentTerm (§5.1)
 	if arguments.Term < rf.currentTerm {
 		results.Term = rf.currentTerm
 		results.Success = false
 		return
 	}
 
+	// Reply false if log doesn’t contain an entry at prevLogIndex
+	// whose term matches prevLogTerm (§5.3)
 	if arguments.PrevLogIndex < 0 || arguments.PrevLogIndex >= len(rf.logs) || arguments.PrevLogTerm != rf.logs[arguments.PrevLogIndex].Term {
 		results.Term = rf.currentTerm
 		results.Success = false
@@ -354,16 +362,24 @@ func (rf *Raft) AppendEntries(arguments *AppendEntriesArguments, results *Append
 		return
 	}
 
+	// If an existing entry conflicts with a new one (same index
+	// but different terms), delete the existing entry and all that
+	// follow it (§5.3)
 	if arguments.PrevLogIndex+1 < len(rf.logs) {
 		rf.logs = rf.logs[:arguments.PrevLogIndex+1]
 	}
 
+	// Append any new entries not already in the log
 	rf.logs = append(rf.logs, arguments.Entries...)
 
 	rf.persist()
 
+	// If leaderCommit > commitIndex, set commitIndex =
+	// min(leaderCommit, index of last new entry)
 	if arguments.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = min(arguments.LeaderCommit, len(rf.logs)-1)
+		// If commitIndex > lastApplied: increment lastApplied, apply
+		// log[lastApplied] to state machine (§5.3)
 		rf.doApplyMsg()
 	}
 
@@ -375,10 +391,15 @@ func (rf *Raft) AppendEntries(arguments *AppendEntriesArguments, results *Append
 	}
 }
 
-// Send heartbeat to other servers.
-func (rf *Raft) leaderSendHeartbeats() {
+// Send heartbeat or entries to other servers.
+func (rf *Raft) leaderSendHeartbeats(empty bool) {
 	for i := range rf.peers {
 		if i != rf.me {
+			entries := make([]LogEntry, 0)
+			if empty == false && len(rf.logs)-1 >= rf.nextIndex[i] {
+				entries = rf.logs[rf.nextIndex[i]:]
+			}
+
 			go rf.leaderSendAppendEntries(
 				i,
 				&AppendEntriesArguments{
@@ -386,7 +407,7 @@ func (rf *Raft) leaderSendHeartbeats() {
 					LeaderId:     rf.me,
 					PrevLogIndex: rf.nextIndex[i] - 1,
 					PrevLogTerm:  rf.logs[rf.nextIndex[i]-1].Term,
-					Entries:      rf.logs[rf.nextIndex[i]:],
+					Entries:      entries,
 					LeaderCommit: rf.commitIndex,
 				},
 				&AppendEntriesResults{},
@@ -397,7 +418,7 @@ func (rf *Raft) leaderSendHeartbeats() {
 	rf.setHeartbeatTimer()
 }
 
-func (rf *Raft) leaderSendAppendEntries(server int, arguments *AppendEntriesArguments, results *AppendEntriesResults) bool {
+func (rf *Raft) leaderSendAppendEntries(server int, arguments *AppendEntriesArguments, results *AppendEntriesResults) {
 	ok := rf.peers[server].Call("Raft.AppendEntries", arguments, results)
 
 	if ok == true {
@@ -428,7 +449,13 @@ func (rf *Raft) leaderSendAppendEntries(server int, arguments *AppendEntriesArgu
 						}
 					}
 				}
+				// If commitIndex > lastApplied: increment lastApplied, apply
+				// log[lastApplied] to state machine (§5.3)
 				rf.doApplyMsg()
+			} else if rf.currentTerm >= results.Term {
+				// If AppendEntries fails because of log inconsistency:
+				// decrement nextIndex and retry (§5.3)
+				rf.nextIndex[server] -= 1
 			} else if rf.currentTerm < results.Term {
 				// If RPC request or response contains term T > currentTerm:
 				// set currentTerm = T, convert to follower (§5.1)
@@ -436,15 +463,9 @@ func (rf *Raft) leaderSendAppendEntries(server int, arguments *AppendEntriesArgu
 				rf.votedFor = -1
 				rf.persist()
 				rf.beFollower()
-			} else if rf.currentTerm >= results.Term {
-				// If AppendEntries fails because of log inconsistency:
-				// decrement nextIndex and retry (§5.3)
-				rf.nextIndex[server] -= 1
 			}
 		}
 	}
-
-	return ok
 }
 
 // If commitIndex > lastApplied: increment lastApplied, apply
@@ -587,7 +608,7 @@ func (rf *Raft) run() {
 			// Upon election: send initial empty AppendEntries RPCs
 			// (heartbeat) to each server; repeat during idle periods to
 			// prevent election timeouts (§5.2)
-			rf.leaderSendHeartbeats()
+			rf.leaderSendHeartbeats(true)
 		}
 		rf.mu.Unlock()
 
@@ -598,11 +619,13 @@ func (rf *Raft) run() {
 			}
 		}
 
+		// If last log index ≥ nextIndex for a follower: send
+		// AppendEntries RPC with log entries starting at nextIndex
 		for rf.status == LEADER {
 			rf.mu.Lock()
 
 			if rf.status == LEADER {
-				rf.leaderSendHeartbeats()
+				rf.leaderSendHeartbeats(false)
 				rf.mu.Unlock()
 
 				// waiting heartbeat response
